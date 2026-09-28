@@ -1,66 +1,76 @@
 import cv2
 import mediapipe as mp
+import numpy as np
+from src.utils import get_eye_landmarks, calculate_ear
 
 def main():
-    # 1. MediaPipe Face Mesh 초기화 (얼굴 랜드마크 정밀 추출 도구 준비)
+    # MediaPipe 초기화 (안정적인 solutions API 활용)
     mp_face_mesh = mp.solutions.face_mesh
     face_mesh = mp_face_mesh.FaceMesh(
-        max_num_faces=1,           # 화면에 감지할 최대 얼굴 수 (운전자 1명이므로 1)
-        refine_landmarks=True,     # 눈동자 주변까지 정밀하게 감지
+        max_num_faces=1,
+        refine_landmarks=True,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5
     )
-    
-    # 2. 랜드마크를 시각화(그려주는) 도구 준비
-    mp_drawing = mp.solutions.drawing_utils
-    drawing_spec = mp_drawing.DrawingSpec(thickness=1, circle_radius=1)
 
-    # 3. 웹캠 연결 (0번은 기본 노트북/외장 웹캠)
+    # 웹캠 연결 (0번 카메라)
     cap = cv2.VideoCapture(0)
     
-    if not cap.isOpened():
-        print("오류: 웹캠을 열 수 없습니다. 카메라 연결을 확인해주세요.")
-        return
+    # 임계값 설정 (실제 환경에 따라 미세 조정 필요)
+    EAR_THRESHOLD = 0.22      # 이 수치 이하로 떨어지면 눈이 감긴 것임
+    DROWSY_FRAMES_LIMIT = 30  # 감긴 상태가 지속되는 프레임 수 (약 1초~1.5초)
+    drowsy_counter = 0
 
-    print("=== DMS 1~2주차 파이프라인 테스트 구동 중 (종료하려면 키보드의 'q'를 누르세요) ===")
+    print("[INFO] DMS Phase 1 (EAR 졸음 감지) 시스템 가동 시작...")
 
     while cap.isOpened():
         success, frame = cap.read()
         if not success:
-            print("프레임을 읽어오지 못했습니다.")
+            print("웹캠 프레임을 받아올 수 없습니다.")
             break
 
-        # 성능 최적화를 위해 프레임 쓰기 금지 설정
-        frame.flags.writeable = False
-        # OpenCV의 기본 BGR 색상을 MediaPipe가 요구하는 RGB 색상으로 변환
+        # 좌우 반전 (거울 모드) 및 RGB 변환
+        frame = cv2.flip(frame, 1)
+        h, w, _ = frame.shape
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        # AI 모델 추론 수행 (얼굴 랜드마크 좌표 계산)
+
+        # 모델 추론
         results = face_mesh.process(rgb_frame)
 
-        # 화면에 그림을 그리기 위해 다시 쓰기 허용 및 BGR 색상으로 복원
-        frame.flags.writeable = True
-        output_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
-
-        # 얼굴 랜드마크가 감지되었다면 화면에 그물망(그리기) 출력
         if results.multi_face_landmarks:
             for face_landmarks in results.multi_face_landmarks:
-                mp_drawing.draw_landmarks(
-                    image=output_frame,
-                    landmark_list=face_landmarks,
-                    connections=mp_face_mesh.FACEMESH_TESSELATION,
-                    landmark_drawing_spec=drawing_spec,
-                    connection_drawing_spec=mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1)
-                )
+                # 눈 랜드마크 추출
+                right_eye, left_eye = get_eye_landmarks(face_landmarks.landmark, w, h)
 
-        # 결과 화면을 창으로 띄우기
-        cv2.imshow('DMS Pipeline Test - Team Jeonbang', output_frame)
+                # 양쪽 눈 EAR 계산
+                right_ear = calculate_ear(right_eye)
+                left_ear = calculate_ear(left_eye)
+                avg_ear = (right_ear + left_ear) / 2.0
 
-        # 키보드 'q'를 누르면 창이 닫히며 종료
+                # 시각적으로 눈 위치에 초록색 라인 그려주기
+                cv2.polylines(frame, [np.array(right_eye)], True, (0, 255, 0), 1)
+                cv2.polylines(frame, [np.array(left_eye)], True, (0, 255, 0), 1)
+
+                # 졸음 판단 로직
+                if avg_ear < EAR_THRESHOLD:
+                    drowsy_counter += 1
+                    if drowsy_counter >= DROWSY_FRAMES_LIMIT:
+                        cv2.putText(frame, "WARNING: DROWSINESS DETECTED!", (30, 80),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 3)
+                else:
+                    drowsy_counter = 0
+
+                # 화면에 실시간 EAR 수치 출력
+                cv2.putText(frame, f"EAR: {avg_ear:.3f}", (30, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+
+        # 결과 화면 출력
+        cv2.imshow("DMS Phase 1 - Drowsiness Detection", frame)
+
+        # 'q'를 누르면 종료
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    # 자원 해제 및 창 닫기
     cap.release()
     cv2.destroyAllWindows()
 
