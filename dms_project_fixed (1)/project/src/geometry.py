@@ -5,3 +5,13 @@ import numpy as np
 def landmarks_to_pixels(landmarks, width, height):
     """정규화 랜드마크 리스트 -> (N, 2) float 픽셀 좌표 배열 (종횡비 왜곡 방지)."""
     return np.array([[p.x * width, p.y * height] for p in landmarks], dtype=np.float32)
+
+
+def eye_aspect_ratio(p):
+    """EAR. p: (6,2) 픽셀 좌표, 순서 [외측 안각, 위1, 위2, 내측 안각, 아래2, 아래1].
+    EAR = (|p2-p6| + |p3-p5|) / (2 * |p1-p4|)
+    """
+    v1 = np.linalg.norm(p[1] - p[5])
+    v2 = np.linalg.norm(p[2] - p[4])
+    h = np.linalg.norm(p[0] - p[3])
+    return float((v1 + v2) / (2.0 * h + 1e-6))
