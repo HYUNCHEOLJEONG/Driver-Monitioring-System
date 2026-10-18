@@ -1,0 +1,18 @@
+# 가상환경 폴더
+.venv/
+venv/
+ENV/
+
+# 파이썬 캐시 파일
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 빌드, 배포 관련 파일
+build/
+dist/
+*.egg-info/
+
+# 로컬 환경 설정 및 로그
+.env
+*.log
