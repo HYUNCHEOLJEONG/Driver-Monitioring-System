@@ -167,7 +167,7 @@ class GazeAnalyzer(StubAnalyzer):
         text = f"Gaze: {msg}"
 
         # 1. 메인 Gaze 상태 텍스트 출력 (Y=100)
-        cv2.putText(frame, text, (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        cv2.putText(frame, text, (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
         # 2. 미니 UI 버튼 그리기
         bx1, by1, bx2, by2 = self.button_rect
