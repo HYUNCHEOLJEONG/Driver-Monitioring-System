@@ -24,7 +24,7 @@ class EyeStateAnalyzer(Analyzer):
     name = "eye_state"
     requires = ()
 
-    def __init__(self, ear_threshold=0.21, calibration_sec=3.0, closed_ratio=0.7, **kw):
+    def __init__(self, ear_threshold=0.21, calibration_sec=3.0, closed_ratio=0.65, **kw):
         super().__init__(**kw)
         self.fixed_thr = ear_threshold
         self.calib_ms = calibration_sec * 1000
