@@ -55,7 +55,7 @@ class EyeStateAnalyzer(Analyzer):
             # 깜빡임 영향 제거: 상위 50%의 중앙값 = 뜬 눈 EAR
             s = np.sort(self._samples)
             base = float(np.median(s[len(s) // 2:]))
-            if base > 0.15:   # 비정상 기준선(눈 감고 시작 등)이면 고정값 유지
+            if base > 0.10:   # 비정상 기준선(눈 감고 시작 등)이면 고정값 유지
                 self.threshold = base * self.ratio
             self._calibrated = True
 
