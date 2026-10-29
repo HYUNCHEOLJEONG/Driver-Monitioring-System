@@ -22,7 +22,7 @@ class Config:
     )
     # 분석기별 파라미터 (분석기 이름 -> dict)
     analyzer_params: dict = field(default_factory=lambda: {
-        "eye_state": {"ear_threshold": 0.21, "calibration_sec": 3.0, "closed_ratio": 0.7},
+        "eye_state": {"ear_threshold": 0.21, "calibration_sec": 3.0, "closed_ratio": 0.65},
         "perclos": {"window_sec": 30.0, "warn": 0.15, "alarm": 0.30, "min_coverage": 0.5},
         "microsleep": {},
         "gaze": {},
