@@ -7,17 +7,15 @@ from ..types import FrameContext, AnalyzerResult
 from ..geometry import landmarks_to_pixels, calculate_head_pose_angles
 
 class GazeAnalyzer(StubAnalyzer):
-    """전방 미주시 감지: 카메라 기준 자동 보정, 좌우 반전 교정, Gaze 하단 디자인 바이패스 버튼 적용."""
     name = "gaze"
     requires = ()
 
-    def __init__(self, yaw_threshold=30.0, pitch_threshold=22.0, calibration_sec=2.0, **kw):
+    def __init__(self, yaw_threshold=30.0, pitch_threshold=18.0, calibration_sec=2.0, **kw):  # [수정] pitch_threshold를 22.0 -> 18.0으로 낮춰 숙임 감지를 더 민감하게 조정
         super().__init__(**kw)
         self.yaw_threshold = yaw_threshold
         self.pitch_threshold = pitch_threshold
         self.calib_duration = calibration_sec
         
-        # 카메라 정면 자동 기준점(Calibration Offset) 변수
         self.base_yaw = 0.0
         self.base_pitch = 0.0
         self.calib_samples_yaw = []
@@ -25,22 +23,23 @@ class GazeAnalyzer(StubAnalyzer):
         self.calib_start_time = None
         self.is_calibrated = False
 
-        # 3분 바이패스 관련
         self.bypass_until = 0.0  
-        
-        # 미니 버튼 배치 (x1, y1, x2, y2)
-        self.button_rect = (10, 120, 150, 148)
+        # 버튼 좌표
+        self.button_rect = (20, 160, 210, 190)
+
+        self.state_start_time = None
+        self.current_unstable_state = "normal"
 
     def reset(self):
-        """리셋 호출 시 바이패스 및 정면 기준선 재설정"""
         self.bypass_until = 0.0
         self.is_calibrated = False
         self.calib_start_time = None
         self.calib_samples_yaw.clear()
         self.calib_samples_pitch.clear()
+        self.state_start_time = None
+        self.current_unstable_state = "normal"
 
     def toggle_bypass(self):
-        """3분 바이패스 토글"""
         if time.time() < self.bypass_until:
             self.bypass_until = 0.0
             print("[INFO] Mute Mode Disabled.")
@@ -49,7 +48,6 @@ class GazeAnalyzer(StubAnalyzer):
             print("[INFO] 3-Min Mute Mode Activated!")
 
     def handle_mouse_click(self, event, x, y):
-        """버튼 영역 마우스 클릭 감지"""
         if event == cv2.EVENT_LBUTTONDOWN:
             x1, y1, x2, y2 = self.button_rect
             if x1 <= x <= x2 and y1 <= y <= y2:
@@ -61,17 +59,18 @@ class GazeAnalyzer(StubAnalyzer):
 
         faces = getattr(ctx.face_result, "face_landmarks", None)
         if not faces:
+            self.state_start_time = None
+            self.current_unstable_state = "normal"
             return AnalyzerResult(
                 name=self.name,
                 value=None,
                 alert="none",
-                info={"face": False, "state": "normal", "message": "Head Forward", "bypassed": is_bypassed}
+                info={"face": False, "state": "normal", "message": "Head Forward", "bypassed": is_bypassed, "duration": 0.0}
             )
 
         pts = landmarks_to_pixels(faces[0], ctx.width, ctx.height)
         raw_yaw, raw_pitch = calculate_head_pose_angles(pts)
 
-        # 카메라 위치 기준 자동 정면 칼리브레이션 (첫 2초간 정면을 바라보는 기준 수집)
         if not self.is_calibrated:
             if self.calib_start_time is None:
                 self.calib_start_time = current_time
@@ -84,37 +83,64 @@ class GazeAnalyzer(StubAnalyzer):
                 self.base_pitch = float(np.median(self.calib_samples_pitch))
                 self.is_calibrated = True
 
-            # 칼리브레이션 진행 중에는 무조건 흰색 Head Forward 상태 유지
             return AnalyzerResult(
                 name=self.name,
                 value={"yaw": 0.0, "pitch": 0.0},
                 alert="none",
-                info={"face": True, "state": "normal", "message": "Head Forward (Calibrating...)", "bypassed": is_bypassed}
+                info={"face": True, "state": "normal", "message": "Head Forward (Calibrating...)", "bypassed": is_bypassed, "duration": 0.0}
             )
 
-        # 기준 오프셋을 차감하여 현재 사용자가 보는 '카메라 정면'을 0.0으로 만듦
         norm_yaw = raw_yaw - self.base_yaw
         norm_pitch = raw_pitch - self.base_pitch
+
+        instant_state = "normal"
+        if norm_yaw < -self.yaw_threshold:
+            instant_state = "head_right"
+        elif norm_yaw > self.yaw_threshold:
+            instant_state = "head_left"
+        elif norm_pitch < -self.pitch_threshold:
+            instant_state = "head_up"
+        elif norm_pitch > self.pitch_threshold:
+            instant_state = "head_down"
+
+        if instant_state == "normal":
+            self.current_unstable_state = "normal"
+            self.state_start_time = None
+        else:
+            if self.current_unstable_state != instant_state:
+                self.current_unstable_state = instant_state
+                self.state_start_time = current_time
+
+        duration = 0.0
+        if self.state_start_time is not None:
+            duration = current_time - self.state_start_time
 
         state = "normal"
         msg = "Head Forward"
         alert_level = "none"
 
-        # 좌/우 거울모드 반전 교정 및 상/하 각도 판정
-        # 카메라 시점 기준: 고개를 오른쪽으로 돌리면 yaw가 음수, 왼쪽이면 양수
-        if norm_yaw < -self.yaw_threshold:       # 오른쪽으로 고개를 돌릴 때
+        if instant_state == "head_right":
             state = "head_right"
-            msg = "Head RIGHT [WARNING]"
-            alert_level = "warning"
-        elif norm_yaw > self.yaw_threshold:      # 왼쪽으로 고개를 돌릴 때
+            if duration >= 3.5:
+                msg = "Head RIGHT [WARNING]"
+                alert_level = "warning"
+            else:
+                msg = f"Head RIGHT ({duration:.1f}s)"
+        elif instant_state == "head_left":
             state = "head_left"
-            msg = "Head LEFT [WARNING]"
-            alert_level = "warning"
-        elif norm_pitch < -self.pitch_threshold: # 위쪽을 볼 때 (Head UP)
+            if duration >= 3.5:
+                msg = "Head LEFT [WARNING]"
+                alert_level = "warning"
+            else:
+                msg = f"Head LEFT ({duration:.1f}s)"
+        elif instant_state == "head_up":
             state = "head_up"
-            msg = "Head UP [WARNING]"
-            alert_level = "warning"
-        elif norm_pitch > self.pitch_threshold:  # 아래쪽으로 고개를 숙일 때 (Head DOWN)
+            if duration >= 3.5:
+                msg = "Head UP [WARNING]"
+                alert_level = "warning"
+            else:
+                msg = f"Head UP ({duration:.1f}s)"
+        elif instant_state == "head_down":
             if is_bypassed:
                 state = "normal"
                 msg = "Head Forward (Muted)"
@@ -123,7 +149,7 @@ class GazeAnalyzer(StubAnalyzer):
                 msg = "Head DOWN [ALARM]"
                 alert_level = "alarm"
                 try:
-                    winsound.Beep(1200, 100) # 경고음
+                    winsound.Beep(1200, 100)
                 except Exception:
                     pass
         else:
@@ -141,7 +167,8 @@ class GazeAnalyzer(StubAnalyzer):
                 "pitch": norm_pitch,
                 "message": msg,
                 "bypassed": is_bypassed,
-                "bypass_left": max(0, int(self.bypass_until - current_time))
+                "bypass_left": max(0, int(self.bypass_until - current_time)),
+                "duration": duration
             }
         )
 
@@ -153,42 +180,75 @@ class GazeAnalyzer(StubAnalyzer):
         state = info.get("state", "normal")
         msg = info.get("message", "Head Forward")
         is_bypassed = info.get("bypassed", False)
+        duration = info.get("duration", 0.0)
 
-        #  상태별 텍스트 색상 매핑
+        # UI 배경 대시보드 박스 좌표
+        px1, py1, px2, py2 = 10, 90, 265, 198
+
+        #반투명 효과
+        overlay = frame.copy()
+
+        #패널 배경 -----> 다크 네이버/차콜
+        cv2.rectangle(overlay, (px1, py1), (px2, py2), (15, 20, 30), -1)
+
+        #상태에 따른 패널 외곽 테두리 색상 변화
         if state == "normal":
-            color = (255, 255, 255)  # 정면/초기: 흰색
-        elif state == "head_up":
-            color = (0, 255, 255)    # 위쪽: 노란색
-        elif state in ["head_left", "head_right"]:
-            color = (0, 165, 255)    # 좌/우: 주황색
-        else:  
-            color = (0, 0, 255)      # 숙임: 빨간색 + 알람
+            panel_border = (46, 204, 113)
+            text_color = (80, 255, 130)
+        elif state in ["head_up", "head_left", "head_right"]:
+            panel_border = (0, 140, 255)
+            text_color = (0, 165, 255)
+        else:
+            panel_border = (0, 0, 255)
+            text_color = (0, 0, 255)
 
+        #투명도 적용
+        alpha = 0.7
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+
+        #패널 아웃라인 테두리 그림
+        cv2.rectangle(frame, (px1, py1), (px2, py2), panel_border, 1)
+        cv2.rectangle(frame, (px1, py1), (px2, py1 + 22), panel_border, -1)
+        cv2.putText(frame, "AI GAZE MONITORING", (px1 + 15, py1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+
+        #Gaze 상태 테스트 출력
         text = f"Gaze: {msg}"
+        cv2.putText(frame, text, (px1 + 18, py1 + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.52, text_color, 2, cv2.LINE_AA)
 
-        # 1. 메인 Gaze 상태 텍스트 출력 (Y=100)
-        cv2.putText(frame, text, (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        #3.5초 이상 지속 경고 --->깜박임 효과
+        if state in ["head_up", "head_left", "head_right"]:
+            bar_x1, bar_y1, bar_x2, bar_y2 = px1 + 18, py1 + 60, px2 - 18, py1 + 68
+            cv2.rectangle(frame, (bar_x1, bar_y1), (bar_x2, bar_y2), (50, 50, 50), -1)
+            fill_width = int((min(duration, 3.5) / 3.5) * (bar_x2 - bar_x1))
+            bar_color = (0, 165, 255) if duration < 3.5 else (0, 0, 255)
+            cv2.rectangle(frame, (bar_x1, bar_y1), (bar_x1 + fill_width, bar_y2), bar_color, -1)
+            cv2.rectangle(frame, (bar_x1, bar_y1), (bar_x2, bar_y2), (150, 150, 150), 1)
 
-        # 2. 미니 UI 버튼 그리기
+        if state in ["head_up", "head_left", "head_right"] and duration >= 3.5:
+            if int(time.time() * 5) % 2 == 0:
+                h, w, _ = frame.shape
+                cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 165, 255), 5)
+        elif state == "alarm":
+            if int(time.time() * 6) % 2 == 0:
+                h, w, _ = frame.shape
+                cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), 6)
+
+        #Mute 버튼 렌더링
         bx1, by1, bx2, by2 = self.button_rect
-        
         if is_bypassed:
             left_sec = info.get("bypass_left", 0)
-            btn_text = f"MUTE ({left_sec}s)"
-            bg_color = (35, 120, 35)      # 세련된 다크 세이지 그린
-            border_color = (50, 220, 50)  # 밝은 녹색 테두리
-            text_color = (255, 255, 255)
+            btn_text = f"MUTE ACTIVE ({left_sec}s)"
+            bg_color = (25, 90, 25)
+            btn_border = (40, 220, 40)
+            btn_text_col = (255, 255, 255)
         else:
-            btn_text = "3m AUTO MUTE"
-            bg_color = (45, 45, 45)       # 모던 패널 다크 그레이
-            border_color = (120, 120, 120)# 은색 테두리
-            text_color = (220, 220, 220)
+            btn_text = "[ 3m AUTO MUTE ]"
+            bg_color = (40, 45, 55)
+            btn_border = (120, 130, 150)
+            btn_text_col = (220, 230, 240)
 
-        # 버튼 배경 및 패널 테두리
         cv2.rectangle(frame, (bx1, by1), (bx2, by2), bg_color, -1)
-        cv2.rectangle(frame, (bx1, by1), (bx2, by2), border_color, 1)
-
-        # 버튼 내부 텍스트 
-        cv2.putText(frame, btn_text, (bx1 + 10, by1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
+        cv2.rectangle(frame, (bx1, by1), (bx2, by2), btn_border, 1)
+        cv2.putText(frame, btn_text, (bx1 + 10, by1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.43, btn_text_col, 1, cv2.LINE_AA)
 
         return frame
