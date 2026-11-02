@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent
 @dataclass
 class Config:
     face_model: Path = ROOT / "models" / "face_landmarker.task"
-    yolo_model: Path = ROOT / "models" / "yolo11n.pt"
+    yolo_model: Path = ROOT / "models" / "best.pt"
     camera_index: int = 0          # 외부 NIR 카메라 연결 시 변경
     frame_width: int = 640
     frame_height: int = 480
