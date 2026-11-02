@@ -24,7 +24,7 @@ class EyeStateAnalyzer(Analyzer):
     name = "eye_state"
     requires = ()
 
-    def __init__(self, ear_threshold=0.21, calibration_sec=3.0, closed_ratio=0.7, **kw):
+    def __init__(self, ear_threshold=0.21, calibration_sec=3.0, closed_ratio=0.65, **kw):
         super().__init__(**kw)
         self.fixed_thr = ear_threshold
         self.calib_ms = calibration_sec * 1000
@@ -55,7 +55,7 @@ class EyeStateAnalyzer(Analyzer):
             # 깜빡임 영향 제거: 상위 50%의 중앙값 = 뜬 눈 EAR
             s = np.sort(self._samples)
             base = float(np.median(s[len(s) // 2:]))
-            if base > 0.15:   # 비정상 기준선(눈 감고 시작 등)이면 고정값 유지
+            if base > 0.10:   # 비정상 기준선(눈 감고 시작 등)이면 고정값 유지
                 self.threshold = base * self.ratio
             self._calibrated = True
 
