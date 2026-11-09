@@ -28,15 +28,6 @@ class FaceDetector:
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         return self.landmarker.detect_for_video(image, int(timestamp_ms))
 
-    @staticmethod
-    def draw(frame, result):
-        h, w = frame.shape[:2]
-        for landmarks in result.face_landmarks:
-            for p in landmarks:
-                x = max(0, min(w - 1, int(p.x * w)))
-                y = max(0, min(h - 1, int(p.y * h)))
-                cv2.circle(frame, (x, y), 1, (0, 255, 0), -1)
-        return frame
 
     def close(self):
         self.landmarker.close()

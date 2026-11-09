@@ -18,9 +18,6 @@ class Analyzer(ABC):
     def update(self, ctx: FrameContext) -> AnalyzerResult:
         """프레임 1장 처리. 상태(슬라이딩 윈도우 등)는 인스턴스에 보관."""
 
-    def draw(self, frame, result: AnalyzerResult):
-        """선택: 결과 오버레이."""
-        return frame
 
     def reset(self):
         """선택: 상태 초기화."""
