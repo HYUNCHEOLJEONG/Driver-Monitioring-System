@@ -6,8 +6,9 @@ from .microsleep import MicrosleepAnalyzer
 from .gaze import GazeAnalyzer
 from .distraction import DistractionAnalyzer
 from .occlusion import OcclusionAnalyzer
+from .fatigue_analyzer import FatigueAnalyzer  # [추가] 피로도 분석기 임포트
 
 REGISTRY = {c.name: c for c in (
     EyeStateAnalyzer, PerclosAnalyzer, EyeClosureAnalyzer, MicrosleepAnalyzer,
-    GazeAnalyzer, DistractionAnalyzer, OcclusionAnalyzer,
+    GazeAnalyzer, DistractionAnalyzer, OcclusionAnalyzer, FatigueAnalyzer,  # [추가] 튜플에 FatigueAnalyzer 포함
 )}

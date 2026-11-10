@@ -6,25 +6,24 @@ from src.object_detector import ObjectDetector
 from src.pipeline import Pipeline
 from src.camera_capture import open_camera
 
-
 def main():
     cfg = Config()
     face = FaceDetector(cfg.face_model, num_faces=2)
     pipeline = None
     try:
-        obj = ObjectDetector(cfg.yolo_model, cfg.yolo_conf, cfg.yolo_classes, cfg.yolo_class_conf, imgsz=cfg.yolo_imgsz)
+        # [수정] 조원이 작성한 ObjectDetector 초기화 방식에 맞춰 인자 개수를 2개로 조정
+        obj = ObjectDetector(cfg.yolo_model, cfg.yolo_conf)
         pipeline = Pipeline(face, obj, cfg)
         camera = open_camera(cfg)
         pipeline.events.emit("SESSION", f"모니터링 시작 · 카메라={cfg.camera_index} · 모델={cfg.yolo_model.name}")
 
-        # 리스트 형태의 analyzers에서 "gaze" 분석기를 안전하게 찾아내는 함수
-        def get_gaze_analyzer():
+        def get_analyzer(name):
             if hasattr(pipeline, "analyzers"):
                 if isinstance(pipeline.analyzers, dict):
-                    return pipeline.analyzers.get("gaze")
+                    return pipeline.analyzers.get(name)
                 elif isinstance(pipeline.analyzers, list):
                     for a in pipeline.analyzers:
-                        if getattr(a, "name", None) == "gaze":
+                        if getattr(a, "name", None) == name:
                             return a
             return None
 
@@ -46,7 +45,7 @@ def main():
                     if failed_frames == 1:
                         pipeline.events.emit("CAMERA", "프레임 수신 실패 · 재시도 중", "WARN")
                     if failed_frames >= 5:
-                        print("Camera stopped delivering frames (5 consecutive failures). Check connection or other camera apps.")
+                        print("Camera stopped delivering frames (5 consecutive failures).")
                         break
                     if cv2.waitKey(50) & 0xFF in (ord("q"), ord("Q"), 27):
                         break
@@ -61,22 +60,23 @@ def main():
                 now = time.monotonic()
                 fps = 1.0 / max(now - previous, 1e-6)
                 previous = now
-                
-                cv2.imshow(window_name, pipeline.yolo_status.render(
-                    ctx, fps=fps, camera_index=cfg.camera_index, draw_landmarks=cfg.draw_landmarks))
+
+                rendered_frame = pipeline.yolo_status.render(
+                    ctx, fps=fps, camera_index=cfg.camera_index, draw_landmarks=cfg.draw_landmarks)
+
+                cv2.imshow(window_name, rendered_frame)
                 preview_shown = True
                 
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), ord("Q"), 27):
                     break
                 elif key in (ord("r"), ord("R")):
-                    gaze_analyzer = get_gaze_analyzer()
+                    gaze_analyzer = get_analyzer("gaze")
                     if gaze_analyzer is not None:
                         gaze_analyzer.reset()
                         pipeline.events.emit("GAZE", "전방 자세 재보정 시작 · 정면을 2초간 보세요")
-                elif key == ord("b") or key == ord("B"):
-                    # 키보드 'B'를 눌러도 3분 바이패스 토글 가능
-                    gaze_analyzer = get_gaze_analyzer()
+                elif key in (ord("b"), ord("B")):
+                    gaze_analyzer = get_analyzer("gaze")
                     if gaze_analyzer and hasattr(gaze_analyzer, "toggle_bypass"):
                         gaze_analyzer.toggle_bypass()
         finally:
@@ -87,7 +87,6 @@ def main():
             pipeline.events.emit("SESSION", "모니터링 종료")
             pipeline.close()
         face.close()
-
 
 if __name__ == "__main__":
     main()

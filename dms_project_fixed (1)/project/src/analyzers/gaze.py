@@ -10,7 +10,7 @@ class GazeAnalyzer(StubAnalyzer):
     name = "gaze"
     requires = ()
 
-    def __init__(self, yaw_threshold=30.0, pitch_threshold=18.0, calibration_sec=2.0, **kw):  # [수정] pitch_threshold를 22.0 -> 18.0으로 낮춰 숙임 감지를 더 민감하게 조정
+    def __init__(self, yaw_threshold=24.0, pitch_threshold=14.0, calibration_sec=2.0, **kw):  # [최적화 수정] 임계값을 낮춰(좌우 30->24, 상하 18->14) 민감도 상향
         super().__init__(**kw)
         self.yaw_threshold = yaw_threshold
         self.pitch_threshold = pitch_threshold
