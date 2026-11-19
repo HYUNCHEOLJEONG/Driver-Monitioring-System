@@ -1,4 +1,5 @@
 import time
+import argparse
 import cv2
 from config import Config
 from src.face_detector import FaceDetector
@@ -7,13 +8,30 @@ from src.pipeline import Pipeline
 from src.camera_capture import open_camera
 
 def main():
+    parser = argparse.ArgumentParser(description="DMS keyboard vehicle simulation")
+    parser.add_argument("--camera", type=int, default=None)
+    parser.add_argument("--list-cameras", action="store_true")
+    parser.add_argument("--sim-speed-kmh", type=float, default=None)
+    args = parser.parse_args()
+    if args.list_cameras:
+        for index in range(6):
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+            try:
+                ok, frame = cap.read() if cap.isOpened() else (False, None)
+                print(f"index {index}: {'OK ' + str(frame.shape) if ok else '-'}")
+            finally:
+                cap.release()
+        return
     cfg = Config()
+    if args.camera is not None: cfg.camera_index = args.camera
     face = FaceDetector(cfg.face_model, num_faces=2)
     pipeline = None
     try:
-        # [수정] 조원이 작성한 ObjectDetector 초기화 방식에 맞춰 인자 개수를 2개로 조정
         obj = ObjectDetector(cfg.yolo_model, cfg.yolo_conf)
         pipeline = Pipeline(face, obj, cfg)
+        if args.sim_speed_kmh is not None:
+            from src.warning_rules import valid_speed
+            pipeline.vehicle_source.state.speed_kph = valid_speed(args.sim_speed_kmh)
         camera = open_camera(cfg)
         pipeline.events.emit("SESSION", f"모니터링 시작 · 카메라={cfg.camera_index} · 모델={cfg.yolo_model.name}")
 
@@ -53,6 +71,8 @@ def main():
                 if failed_frames:
                     pipeline.events.emit("CAMERA", "프레임 수신 복구")
                 failed_frames = 0
+                if frame.ndim == 2 or frame.shape[2] == 1:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
                 ts = max(int((time.monotonic() - start) * 1000), last_ts + 1)
                 last_ts = ts
 
@@ -70,6 +90,8 @@ def main():
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), ord("Q"), 27):
                     break
+                elif pipeline.on_key(key):
+                    pass
                 elif key in (ord("r"), ord("R")):
                     gaze_analyzer = get_analyzer("gaze")
                     if gaze_analyzer is not None:
