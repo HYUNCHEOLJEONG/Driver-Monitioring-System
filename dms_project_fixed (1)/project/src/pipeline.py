@@ -1,15 +1,12 @@
-import os
 from .types import FrameContext
 from .event_logger import EventLogger
 from .phone_presence import PhonePresence
 from .dashboard import Dashboard
 from .smoking_relation import SmokingRelation
 from .analyzers import REGISTRY
-from .vehicle import create_source
-try:
-    from vehicle_config import VehicleConfig
-except ImportError:
-    VehicleConfig = None
+from .vehicle import ManualSource
+from .warning_rules import valid_speed
+from .warning_sound import WarningSound
 
 
 class Pipeline:
@@ -30,23 +27,12 @@ class Pipeline:
             mouth_distance=config.smoking_mouth_distance)
         self.phone_relation = PhonePresence()
 
-        # ── [핵심 수정] sample_can.csv와 sample.dbc의 절대/상대 경로 명시 및 Replay 강제 연동 ──
-        base_dir = os.path.dirname(os.path.dirname(__file__))
-        dbc_path = os.path.join(base_dir, "data", "sample.dbc")
-        replay_path = os.path.join(base_dir, "data", "sample_can.csv")
-
-        if VehicleConfig is not None:
-            vehicle_cfg = VehicleConfig(source="replay", dbc_path=dbc_path, replay_path=replay_path, replay_loop=True)
-        else:
-            class DummyVehicleCfg:
-                source = "replay"
-                dbc_path = dbc_path
-                replay_path = replay_path
-                replay_loop = True
-            vehicle_cfg = DummyVehicleCfg()
-
-        self.vehicle_source = create_source(vehicle_cfg)
+        self.vehicle_source = ManualSource()
         self.vehicle_source.start()
+        self.warning_sound = WarningSound()
+
+    def on_key(self, key):
+        return self.vehicle_source.on_key(key)
 
     @staticmethod
     def _build(config):
@@ -68,12 +54,23 @@ class Pipeline:
             visit(n)
         return [REGISTRY[n](**config.analyzer_params.get(n, {})) for n in ordered]
 
-    def process(self, frame, timestamp_ms):
+    def process(self, frame, timestamp_ms, speed_kmh=None, gear=None, turn_signal=None):
         h, w = frame.shape[:2]
         ctx = FrameContext(frame=frame, timestamp_ms=timestamp_ms, width=w, height=h)
         
         # ── 매 프레임마다 재생 중인 CAN 데이터의 상태(속도 등)를 가져와서 주입 ──
         ctx.vehicle = self.vehicle_source.get_state()
+        # 키보드 입력과 동일한 구조로 외부 모의 입력도 주입 가능.
+        if speed_kmh is not None: ctx.vehicle.speed_kph = valid_speed(speed_kmh)
+        if gear is not None: ctx.vehicle.gear = gear
+        if turn_signal is not None:
+            ctx.vehicle.turn_left = turn_signal in ("left", "both", "hazard")
+            ctx.vehicle.turn_right = turn_signal in ("right", "both", "hazard")
+        ctx.speed_kmh = valid_speed(ctx.vehicle.speed_kph)
+        ctx.vehicle.speed_kph = ctx.speed_kmh
+        ctx.gear = ctx.vehicle.gear
+        ctx.turn_signal = ("both" if ctx.vehicle.turn_left and ctx.vehicle.turn_right else
+                           "left" if ctx.vehicle.turn_left else "right" if ctx.vehicle.turn_right else "off")
 
         ctx.face_result = self.face.detect(frame, timestamp_ms)
         if self._frame_idx % max(1, self.cfg.yolo_every_n_frames) == 0:
@@ -89,9 +86,11 @@ class Pipeline:
         for a in self.analyzers:
             ctx.results[a.name] = a.update(ctx)
             
+        self.warning_sound.update(ctx)
         self.events.update(ctx, self.yolo_status.result, self.yolo_status.smoking_result)
         return ctx
 
     def close(self):
+        self.warning_sound.close()
         if hasattr(self, "vehicle_source") and self.vehicle_source:
             self.vehicle_source.stop()

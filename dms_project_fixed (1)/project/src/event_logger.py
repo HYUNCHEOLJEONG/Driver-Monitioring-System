@@ -34,16 +34,22 @@ class EventLogger:
         if count!=1 or not info.get('face'):state='unknown'
         elif 'Calibrating' in info.get('message',''):state='calibrating'
         elif state=='alarm':state='head_down'
-        elif state in ('head_left','head_right','head_up'):
-            state+=':warning' if info.get('duration',0)>=3.5 else ':pending'
-        labels={'unknown':'고개 방향 판정 불가','calibrating':'전방 기준 자세 보정 중','normal':'전방 자세',
-                'head_down':'고개 떨굼 경고'}
-        direction={'head_left':'왼쪽','head_right':'오른쪽','head_up':'위쪽'}
-        if ':' in state:
-            side,phase=state.split(':')
-            message=f"전방 미주시 {'경고 (3.5초 이상)' if phase=='warning' else '감지 · 시간 누적 중'} · {direction[side]}"
-        else:message=labels.get(state,state)
-        self.transition('GAZE',state,message,t,'WARN' if state=='head_down' or state.endswith(':warning') else 'INFO')
+        direction={'head_left':'왼쪽','head_right':'오른쪽','head_up':'위쪽','head_down':'아래쪽'}
+        limit=info.get('warning_sec')
+        if state in direction:
+            side=state
+            phase=('paused' if info.get('paused') else 'detect_only' if limit is None else
+                   'warning' if gaze.alert != 'none' else 'pending')
+            state += ':' + phase
+            message=f"전방 미주시 · {direction[side]} · " + {
+                'paused':'일시정지 · '+info.get('pause_reason',''), 'detect_only':'감지만 표시',
+                'warning':f'경고 (기준 {limit}초)', 'pending':f'시간 누적 중 (기준 {limit}초)'}[phase]
+        else:
+            message={'unknown':'고개 방향 판정 불가','calibrating':'전방 기준 자세 보정 중','normal':'전방 자세'}.get(state,state)
+        self.transition('GAZE',state,message,t,'WARN' if state.endswith(':warning') else 'INFO')
+        vehicle_key=(ctx.speed_kmh,ctx.gear,ctx.turn_signal)
+        self.transition('VEHICLE',vehicle_key,f'모의 차량 입력 · 차속={ctx.speed_kmh} · 기어={ctx.gear} · 방향지시등={ctx.turn_signal}',t)
+        self.transition('GAZE_PAUSE',info.get('pause_reason',''), '전방 미주시 일시정지 · '+info['pause_reason'] if info.get('paused') else '전방 미주시 재개',t)
         self.transition('GAZE_MUTE',bool(info.get('bypassed')), '고개 방향 경고 음소거 ON' if info.get('bypassed') else '고개 방향 경고 음소거 OFF',t)
         eye=results.get('eye_closure');perclos=results.get('perclos')
         for code,r,label in (('EYE_CLOSURE',eye,'눈 감김'),('PERCLOS',perclos,'눈 감김 비율')):

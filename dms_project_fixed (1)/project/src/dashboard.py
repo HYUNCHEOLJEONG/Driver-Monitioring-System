@@ -1,8 +1,6 @@
 """Live DMS dashboard. All metrics model with Ambient Lighting & Stable Layout."""
 from collections import deque
 from datetime import datetime
-import os
-import csv
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -10,7 +8,6 @@ from PIL import Image, ImageDraw, ImageFont
 class Dashboard:
     RED='#ff514c'; GREEN='#35dca4'; AMBER='#ffc34d'; MUTED='#8a9ca9'
     
-    _can_cache = None
     
     def __init__(self):
         self.result={'state':'no_phone'}
@@ -22,46 +19,6 @@ class Dashboard:
         self.last_event_time = 0        
         self.current_stage = 1          
         self.last_decay_time = 0        
-
-    @classmethod
-    def _load_can_speed(cls, timestamp_ms):
-        """CAN ID 2C0 데이터 파싱 로직 정밀 보정 (실제 속도 변화 반영)"""
-        if cls._can_cache is None:
-            cls._can_cache = []
-            try:
-                csv_path = os.path.join(os.path.dirname(__file__), "..", "data", "sample_can.csv")
-                if os.path.exists(csv_path):
-                    with open(csv_path, 'r', encoding='utf-8') as f:
-                        reader = csv.reader(f)
-                        for row in reader:
-                            if len(row) >= 3 and row[1].strip() == '2C0':
-                                try:
-                                    t = float(row[0].strip())
-                                    hex_data = row[2].strip().replace(" ", "")
-                                    if len(hex_data) >= 4:
-                                        # 표준 바이트 오더 적용 (앞 2바이트 조합 후 0.01 스케일)
-                                        # A00F 같은 헥사 데이터를 바이트 스환하여 실제 속도 값 추출
-                                        b1 = int(hex_data[0:2], 16)
-                                        b2 = int(hex_data[2:4], 16)
-                                        val = ((b2 << 8) | b1) * 0.01
-                                        if 0.0 <= val <= 300.0:
-                                            cls._can_cache.append((t, val))
-                                except ValueError:
-                                    continue
-            except Exception:
-                pass
-        
-        if not cls._can_cache:
-            return 0.0
-            
-        current_sec = (timestamp_ms / 1000.0) % (cls._can_cache[-1][0] if cls._can_cache else 40.0)
-        
-        current_speed = 0.0
-        for t, val in cls._can_cache:
-            if t >= current_sec:
-                current_speed = val
-                break
-        return current_speed if current_speed > 0 else cls._can_cache[0][1]
 
     @staticmethod
     def analyze_ambient_lighting(frame):
@@ -82,9 +39,12 @@ class Dashboard:
     @staticmethod
     def gaze_progress(gaze, valid):
         info=gaze.info if gaze else {}
-        active=bool(valid and info.get('face') and info.get('state') in ('head_left','head_right','head_up'))
+        active=bool(valid and info.get('face') and info.get('state') in ('head_left','head_right','head_up','head_down'))
         duration=max(0.0,float(info.get('duration',0))) if active else 0.0
-        return active, duration, min(1.0, duration/3.5), active and duration>=3.5
+        limit=info.get('warning_sec')
+        fill=min(1.0,duration/limit) if limit and active else 0.0
+        warning=bool(active and not info.get('paused') and gaze.alert != 'none')
+        return active, duration, fill, warning
 
     def render(self, ctx, fps=0, camera_index=0, draw_landmarks=True):
         frame=ctx.frame.copy(); h, w=frame.shape[:2]
@@ -98,16 +58,10 @@ class Dashboard:
         
         t_ms = ctx.timestamp_ms
         
-        vehicle_state = getattr(ctx, "vehicle", None) or results.get("vehicle")
-        speed = 0.0
-        if vehicle_state:
-            if hasattr(vehicle_state, "speed_kph") and vehicle_state.speed_kph is not None:
-                speed = float(vehicle_state.speed_kph)
-            elif isinstance(vehicle_state, dict):
-                speed = float(vehicle_state.get("speed_kph") or vehicle_state.get("speed", 0.0))
-        
-        if speed <= 0.0:
-            speed = self._load_can_speed(t_ms)
+        speed = ctx.speed_kmh
+        speed_label = f'SIM {speed:.0f} km/h' if speed is not None else 'DEFAULT (차속 없음)'
+        signal = {'off':'OFF','left':'LEFT','right':'RIGHT','both':'BOTH'}.get(ctx.turn_signal,ctx.turn_signal)
+        vehicle_label = f'{speed_label}  /  GEAR {ctx.gear}  /  SIG {signal}'
 
         faces=getattr(ctx.face_result,'face_landmarks',[]) or []
         valid=len(faces)==1
@@ -116,9 +70,11 @@ class Dashboard:
         gaze_state=gaze.info.get('state','normal') if gaze_valid else 'unknown'
         if gaze_state=='alarm': gaze_state='head_down'
         head_down=gaze_valid and gaze_state=='head_down'
+        gaze_paused=bool(gaze and gaze.info.get('paused'))
         calibrating=bool(gaze_valid and 'Calibrating' in gaze.info.get('message',''))
         offroad=gaze_valid and not calibrating and gaze_state!='normal'
         gaze_active, gaze_seconds, gaze_fill, gaze_warning=self.gaze_progress(gaze,valid)
+        head_down_alert=bool(head_down and gaze_warning)
         phone=self.result.get('state')=='holding'; smoking=self.smoking_result.get('state')=='smoking'
         
         rest_recommended = fatigue and fatigue.info.get('rest_recommended', False)
@@ -155,8 +111,8 @@ class Dashboard:
         drowsy_stage_text = stage_names.get(active_slots, '안전 주행 (1단계)')
 
         drowsy=valid and any(r and r.alert in ('warning','alarm') for r in (closure,perclos))
-        color=self.RED if drowsy or smoking or phone or head_down or gaze_warning or rest_recommended or active_slots == 3 else self.AMBER if offroad or not valid or active_slots == 2 else self.GREEN
-        title=('HEAD DOWN ALERT' if head_down else 'DROWSINESS ALERT' if drowsy else 'SMOKING ALERT' if smoking else 'PHONE USE DETECTED' if phone
+        color=self.RED if drowsy or smoking or phone or head_down_alert or gaze_warning or rest_recommended or active_slots == 3 else self.AMBER if offroad or not valid or active_slots == 2 else self.GREEN
+        title=('HEAD DOWN ALERT' if head_down_alert else 'DROWSINESS ALERT' if drowsy else 'SMOKING ALERT' if smoking else 'PHONE USE DETECTED' if phone
                else 'ATTENTION ALERT' if gaze_warning else 'CHECK FORWARD' if offroad else 'MONITORING ACTIVE' if valid else 'DRIVER NOT CONFIRMED')
         
         if draw_landmarks:
@@ -172,7 +128,7 @@ class Dashboard:
             
         W=960; vh=round(h*W/w)
         
-        canvas=Image.new('RGB',(W,vh+500),'#060e15')
+        canvas=Image.new('RGB',(W,vh+540),'#060e15')
         video=Image.fromarray(cv2.cvtColor(cv2.resize(frame,(W,vh)),cv2.COLOR_BGR2RGB))
         canvas.paste(video,(0,52))
         d=ImageDraw.Draw(canvas)
@@ -189,22 +145,26 @@ class Dashboard:
         env_label = f"ENV: {env_state} (햇빛: {sun_quota})"
         env_color = self.AMBER if env_state == "TUNNEL" else (self.MUTED if env_state == "NIGHT/IR" else self.GREEN)
         
-        text(24,15,f'CAM {camera_index:02d}  /  DRIVER FACING  ·  SPEED: {speed:.1f} km/h  ·  {env_label}',13,env_color)
-        text(690,15,f'{fps:.1f} FPS   {datetime.now():%H:%M:%S}',15,self.MUTED)
+        text(24,15,f'CAM {camera_index:02d}  /  DRIVER FACING  ·  {vehicle_label}',13,env_color)
+        text(24,34,env_label,11,env_color)
+        text(745,15,f'{fps:.1f} FPS   {datetime.now():%H:%M:%S}',15,self.MUTED)
         
         badges=[]
         if valid: badges.append(('EYES CLOSED' if closed else 'EYES OPEN',self.RED if closed else self.GREEN))
-        if offroad: badges.append(('HEAD: DOWN' if head_down else 'HEAD: OFF ROAD',self.RED if head_down or gaze_warning else self.AMBER))
+        if offroad: badges.append(('HEAD: DOWN' if head_down else 'HEAD: OFF ROAD',self.RED if gaze_warning else self.AMBER))
         if not valid: badges.append(('FACE NOT CONFIRMED',self.AMBER))
         for i,(label,c) in enumerate(badges):
             y_badge=65+i*38; d.rounded_rectangle((22,y_badge,282,y_badge+30),6,fill='#07131d',outline=c); text(34,y_badge+4,label,15,c)
             
         # [우측 상단] 전방 미주 / 고개 숙임 감지 게이지
-        if gaze_active or head_down:
-            gauge_color=self.RED if gaze_warning or head_down else self.AMBER
+        if gaze_active or gaze_paused:
+            gauge_color=self.RED if gaze_warning else self.AMBER
             d.rounded_rectangle((510,65,938,167),10,fill='#07131d',outline=gauge_color,width=2)
-            text(526,75,'고개 숙임 경고' if head_down else ('전방 미주시 경고' if gaze_warning else '전방 미주시 감지'),22,gauge_color)
-            text(526,107,f'{gaze_seconds:.1f}초 / 3.5초',15,'white')
+            text(526,75,'전방 미주시 일시정지' if gaze_paused else ('전방 미주시 경고' if gaze_warning else '전방 미주시 감지'),22,gauge_color)
+            limit=gaze.info.get('warning_sec')
+            target=f'{limit:g}초' if limit is not None else '감지만 표시'
+            text(526,107,f'{gaze_seconds:.1f}초 / {target}',15,'white')
+            if gaze_paused: text(526,124,gaze.info.get('pause_reason',''),11,self.MUTED)
             d.rounded_rectangle((526,140,922,151),4,fill='#243544')
             if gaze_fill>0:
                 d.rounded_rectangle((526,140,526+396*gaze_fill,151),4,fill=gauge_color)
@@ -215,7 +175,7 @@ class Dashboard:
             pitch=gaze.value.get('pitch',0); yaw=gaze.value.get('yaw',0)
             threshold=gaze.info.get('pitch_threshold',18)
             d.rounded_rectangle((16, current_y, 730, current_y + 38), 6, fill='#07131d')
-            text(26, current_y + 9, f'고개 편차  좌우 {yaw:+.1f}px / 상하 {pitch:+.1f}px · 숙임 기준 >{threshold:.1f}px · R 재보정', 15, self.MUTED)
+            text(26, current_y + 9, f'고개 편차  좌우 {yaw:+.1f}도 / 상하 {pitch:+.1f}도 · 숙임 기준 >{threshold:.1f}도 · R 재보정', 15, self.MUTED)
             current_y += 46
 
         # [순차적 상대 레이아웃 2단계] 3단계 누적 피로도 바 위젯
@@ -272,7 +232,7 @@ class Dashboard:
         smoke_label = {'unknown':'확인 불가','no_cigarette':'미검출','cigarette_visible':'담배 검출','checking':'입 근처 · 확인 중','smoking':'흡연 추정'}.get(self.smoking_result.get('state'), '확인 불가')
         
         cards = [
-            ('HEAD DIRECTION', gaze_label, self.RED if (head_down or gaze_warning) else self.AMBER if offroad else self.MUTED if not gaze_valid else self.GREEN),
+            ('HEAD DIRECTION', gaze_label, self.RED if gaze_warning else self.AMBER if offroad else self.MUTED if not gaze_valid else self.GREEN),
             ('PHONE USE', '휴대폰 조작' if phone else '미검출', self.RED if phone else self.GREEN),
             ('SMOKING', smoke_label, self.RED if smoking else self.AMBER if smoke_label == '확인 불가' else self.GREEN)
         ]
@@ -286,4 +246,5 @@ class Dashboard:
         muted = gaze and gaze.info.get('bypassed')
         text(36, dashboard_y + 238, 'Q / ESC 종료    R 전방 재보정    B 고개 경고 음소거' + (' · ON' if muted else ''), 11, self.MUTED)
         
+        text(36,dashboard_y+256,'0 정차  1 30  2 50  3 80 km/h  C 차속 해제  G 후진  D 주행  J 좌측등  L 우측등',11,self.MUTED)
         return cv2.cvtColor(np.asarray(canvas), cv2.COLOR_RGB2BGR)
