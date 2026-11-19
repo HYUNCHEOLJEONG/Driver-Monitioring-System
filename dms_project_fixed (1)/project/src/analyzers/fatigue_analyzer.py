@@ -32,7 +32,9 @@ class FatigueAnalyzer(StubAnalyzer):
         speed = 0.0
         if vehicle_info:
             # vehicle_info가 딕셔너리이거나 객체일 경우 속도 추출
-            speed = vehicle_info.get("speed", 0.0) if isinstance(vehicle_info, dict) else getattr(vehicle_info, "speed", 0.0)
+            speed = (vehicle_info.get("speed_kph", vehicle_info.get("speed")) if isinstance(vehicle_info, dict)
+                     else getattr(vehicle_info, "speed_kph", None))
+            speed = float(speed) if speed is not None else 0.0
 
         # 주행 속도가 일정 이상(예: 10km/h 이상)일 때는 위험 상황 가중치를 높이고, 정차 중이면 낮춤
         speed_multiplier = 1.5 if speed > 10.0 else 0.5
