@@ -13,6 +13,11 @@ class FrameContext:
     height: int
     face_result: Any = None           # MediaPipe FaceLandmarkerResult
     objects: list = field(default_factory=list)   # ObjectDetector 결과(dict 리스트)
+    speed_kmh: Optional[float] = None
+    gear: Optional[str] = "D"
+    turn_signal: str = "off"
+    vehicle: Any = None
+    exemptions: dict = field(default_factory=dict)
     results: dict = field(default_factory=dict)   # 앞선 분석기 결과 (name -> AnalyzerResult)
 
 

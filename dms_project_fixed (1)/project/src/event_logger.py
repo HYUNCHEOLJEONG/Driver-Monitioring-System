@@ -1,5 +1,7 @@
 """Terminal-only transition events. Missing evidence is not a normal-state event."""
+import re
 from datetime import datetime
+from .policy import korean_reason
 
 class EventLogger:
     def __init__(self,sink=None):
@@ -35,16 +37,26 @@ class EventLogger:
         elif 'Calibrating' in info.get('message',''):state='calibrating'
         elif state=='alarm':state='head_down'
         elif state in ('head_left','head_right','head_up'):
-            state+=':warning' if info.get('duration',0)>=3.5 else ':pending'
+            limit=info.get('limit')
+            state+=':warning' if gaze.alert=='warning' else ':pending'  # 차속 기준·예외 반영된 분석기 판정
         labels={'unknown':'고개 방향 판정 불가','calibrating':'전방 기준 자세 보정 중','normal':'전방 자세',
                 'head_down':'고개 떨굼 경고'}
         direction={'head_left':'왼쪽','head_right':'오른쪽','head_up':'위쪽'}
         if ':' in state:
             side,phase=state.split(':')
-            message=f"전방 미주시 {'경고 (3.5초 이상)' if phase=='warning' else '감지 · 시간 누적 중'} · {direction[side]}"
+            message=f"전방 미주시 {f'경고 ({limit:.1f}초 이상)' if phase=='warning' else '감지 · 시간 누적 중'} · {direction[side]}"
         else:message=labels.get(state,state)
         self.transition('GAZE',state,message,t,'WARN' if state=='head_down' or state.endswith(':warning') else 'INFO')
+        vehicle_key=(ctx.speed_kmh,ctx.gear,ctx.turn_signal)
+        self.transition('VEHICLE',vehicle_key,f'모의 차량 입력 · 차속={ctx.speed_kmh} · 기어={ctx.gear} · 방향지시등={ctx.turn_signal}',t)
         self.transition('GAZE_MUTE',bool(info.get('bypassed')), '고개 방향 경고 음소거 ON' if info.get('bypassed') else '고개 방향 경고 음소거 OFF',t)
+        reason=korean_reason(re.sub(r' [\d.]+s','',ctx.exemptions.get('gaze','')))  # 경과 초는 빼야 매 프레임 로그가 안 찍힘
+        self.transition('EXEMPT',reason,f'시선 경고 예외 적용 · {reason}' if reason else '시선 경고 예외 없음',t)
+        yawn=results.get('yawn')
+        if yawn and count==1:
+            on=yawn.info.get('state')=='yawning'
+            self.transition('YAWN',on,'하품 감지' if on else '하품 없음',t,'WARN' if on else 'INFO',
+                            f"10분 내 {yawn.info.get('count',0)}회" if on else '')
         eye=results.get('eye_closure');perclos=results.get('perclos')
         for code,r,label in (('EYE_CLOSURE',eye,'눈 감김'),('PERCLOS',perclos,'눈 감김 비율')):
             state='unknown' if count!=1 or r is None else 'collecting' if r.value is None else r.alert

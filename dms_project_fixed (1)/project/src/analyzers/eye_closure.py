@@ -1,11 +1,6 @@
-import threading
 from ..base import Analyzer
 from ..types import FrameContext, AnalyzerResult
-
-try:
-    import winsound  # Windows 전용
-except ImportError:
-    winsound = None
+from ..warning_rules import closure_limit
 
 
 class EyeClosureAnalyzer(Analyzer):
@@ -19,7 +14,7 @@ class EyeClosureAnalyzer(Analyzer):
       alarm_sec       위험 경보 (기본 2.0s)
       open_grace_ms   이 시간보다 짧게 눈이 떠지는 노이즈는 감김 지속으로 간주 (기본 150ms)
       lost_grace_ms   얼굴 미검출 시 감김 타이머를 유지하는 시간 (기본 500ms, 고개 떨굼 대비)
-      beep            Windows 경고음 사용 여부
+      beep            경고음 사용 여부 (실제 재생은 warning_sound.py)
       beep_interval_s 경보음 반복 간격
     """
     name = "eye_closure"
@@ -37,11 +32,6 @@ class EyeClosureAnalyzer(Analyzer):
         self._start = None       # 감김 시작 시각
         self._last_closed = None # 마지막으로 '감김'이 확인된 시각
         self._last_seen = None   # 마지막으로 얼굴이 보인 시각
-        self._last_beep = -10**9
-
-    def _beep(self, freq):
-        if self.beep and winsound:
-            threading.Thread(target=winsound.Beep, args=(freq, 300), daemon=True).start()
 
     def update(self, ctx: FrameContext) -> AnalyzerResult:
         t = ctx.timestamp_ms
@@ -60,12 +50,12 @@ class EyeClosureAnalyzer(Analyzer):
             self._start = None                # 얼굴을 오래 잃음 -> 해제(가림/이탈은 다른 모듈)
 
         dur = (t - self._start) if self._start is not None else 0
-        alert = "alarm" if dur >= self.alarm_ms else "warning" if dur >= self.warn_ms else "none"
-
-        if alert != "none" and t - self._last_beep >= self.beep_gap:
-            self._last_beep = t
-            self._beep(2000 if alert == "alarm" else 1000)
-        return AnalyzerResult(self.name, dur / 1000, alert, {"face": face})
+        # 고속(80km/h 이상)에서는 알람 기준을 차속 규칙만큼 앞당긴다
+        alarm_ms = min(self.alarm_ms, closure_limit(ctx.speed_kmh) * 1000)
+        alert = "alarm" if dur >= alarm_ms else "warning" if dur >= self.warn_ms else "none"
+        return AnalyzerResult(self.name, dur / 1000, alert,
+                              {"face": face, "alarm_sec": alarm_ms / 1000, "beep": self.beep,
+                               "beep_interval_ms": self.beep_gap})
 
     def draw(self, frame, result):
         import cv2

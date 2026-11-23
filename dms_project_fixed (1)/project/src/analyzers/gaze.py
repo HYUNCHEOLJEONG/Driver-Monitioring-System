@@ -1,16 +1,16 @@
 import time
-import winsound
 import numpy as np
 import cv2
 from ._stub import StubAnalyzer
 from ..types import FrameContext, AnalyzerResult
 from ..geometry import landmarks_to_pixels, calculate_head_pose_angles
+from ..warning_rules import gaze_limit
 
 class GazeAnalyzer(StubAnalyzer):
     name = "gaze"
     requires = ()
 
-    def __init__(self, yaw_threshold=30.0, pitch_threshold=18.0, calibration_sec=2.0, **kw):  # [수정] pitch_threshold를 22.0 -> 18.0으로 낮춰 숙임 감지를 더 민감하게 조정
+    def __init__(self, yaw_threshold=24.0, pitch_threshold=14.0, calibration_sec=2.0, **kw):  # [최적화 수정] 임계값을 낮춰(좌우 30->24, 상하 18->14) 민감도 상향
         super().__init__(**kw)
         self.yaw_threshold = yaw_threshold
         self.pitch_threshold = pitch_threshold
@@ -118,28 +118,22 @@ class GazeAnalyzer(StubAnalyzer):
         state = "normal"
         msg = "Head Forward"
         alert_level = "none"
+        # 좌/우/위 이탈만 차속별 허용 시간 + 방향지시등/후진 예외 적용 (고개 떨굼은 졸음 가능성 -> 예외 없음)
+        limit = gaze_limit(ctx.speed_kmh)
+        paused = ctx.exemptions.get(self.name, "")
 
-        if instant_state == "head_right":
-            state = "head_right"
-            if duration >= 3.5:
-                msg = "Head RIGHT [WARNING]"
+        if instant_state in ("head_right", "head_left", "head_up"):
+            state = instant_state
+            side = {"head_right": "RIGHT", "head_left": "LEFT", "head_up": "UP"}[instant_state]
+            if paused:
+                msg = f"Head {side} (exempt: {paused})"
+            elif limit is None:
+                msg = f"Head {side} (low speed, no warning)"
+            elif duration >= limit:
+                msg = f"Head {side} [WARNING]"
                 alert_level = "warning"
             else:
-                msg = f"Head RIGHT ({duration:.1f}s)"
-        elif instant_state == "head_left":
-            state = "head_left"
-            if duration >= 3.5:
-                msg = "Head LEFT [WARNING]"
-                alert_level = "warning"
-            else:
-                msg = f"Head LEFT ({duration:.1f}s)"
-        elif instant_state == "head_up":
-            state = "head_up"
-            if duration >= 3.5:
-                msg = "Head UP [WARNING]"
-                alert_level = "warning"
-            else:
-                msg = f"Head UP ({duration:.1f}s)"
+                msg = f"Head {side} ({duration:.1f}s / {limit:.1f}s)"
         elif instant_state == "head_down":
             if is_bypassed:
                 state = "normal"
@@ -147,11 +141,7 @@ class GazeAnalyzer(StubAnalyzer):
             else:
                 state = "alarm"
                 msg = "Head DOWN [ALARM]"
-                alert_level = "alarm"
-                try:
-                    winsound.Beep(1200, 100)
-                except Exception:
-                    pass
+                alert_level = "alarm"  # 경고음은 warning_sound.py 가 담당
         else:
             state = "normal"
             msg = "Head Forward"
@@ -168,7 +158,9 @@ class GazeAnalyzer(StubAnalyzer):
                 "message": msg,
                 "bypassed": is_bypassed,
                 "bypass_left": max(0, int(self.bypass_until - current_time)),
-                "duration": duration
+                "duration": duration,
+                "limit": limit,
+                "paused": paused,
             }
         )
 
