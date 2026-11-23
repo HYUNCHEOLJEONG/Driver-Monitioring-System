@@ -9,6 +9,7 @@ class WarningSound:
     def __init__(self):
         self._lock = threading.Lock()
         self._last = -10**9
+        self._last_early = -10**9
         self._thread = None
         self._closed = False
 
@@ -22,11 +23,16 @@ class WarningSound:
         if (gaze and gaze.alert != "none" and not gaze.info.get("paused")
                 and not gaze.info.get("bypassed")):
             choices.append((2 if gaze.alert == "alarm" else 1, 1200, 1000))
+        early = ctx.results.get("early_drowsiness")
+        if (early and early.alert != "none" and early.info.get("ready")
+                and ctx.timestamp_ms - self._last_early >= early.info.get("repeat_sec", 60) * 1000):
+            choices.append((1.5, 900, 1000))
         if not choices: return
-        _, freq, gap = max(choices)
+        priority, freq, gap = max(choices)
         if ctx.timestamp_ms - self._last < gap: return
         if not self._lock.acquire(blocking=False): return
         self._last = ctx.timestamp_ms
+        if priority == 1.5: self._last_early = ctx.timestamp_ms
         def play():
             try: winsound.Beep(freq, 300)
             except Exception: pass

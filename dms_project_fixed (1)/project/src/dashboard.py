@@ -1,4 +1,5 @@
 """Live DMS dashboard. All metrics model with Ambient Lighting & Stable Layout."""
+from .early_drowsiness_output import render_early_drowsiness
 from collections import deque
 from datetime import datetime
 import cv2
@@ -247,4 +248,4 @@ class Dashboard:
         text(36, dashboard_y + 238, 'Q / ESC 종료    R 전방 재보정    B 고개 경고 음소거' + (' · ON' if muted else ''), 11, self.MUTED)
         
         text(36,dashboard_y+256,'0 정차  1 30  2 50  3 80 km/h  C 차속 해제  G 후진  D 주행  J 좌측등  L 우측등',11,self.MUTED)
-        return cv2.cvtColor(np.asarray(canvas), cv2.COLOR_RGB2BGR)
+        return render_early_drowsiness(cv2.cvtColor(np.asarray(canvas), cv2.COLOR_RGB2BGR), ctx, self.fonts)

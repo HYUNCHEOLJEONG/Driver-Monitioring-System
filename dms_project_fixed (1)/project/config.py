@@ -26,7 +26,7 @@ class Config:
     
     # [수정] 활성화할 분석기 목록에 "fatigue" 추가
     enabled_analyzers: tuple = (
-        "eye_state", "eye_closure", "perclos", "gaze", "fatigue",
+        "eye_state", "eye_closure", "perclos", "gaze", "fatigue", "early_drowsiness",
     )
     
     # 분석기별 파라미터 (분석기 이름 -> dict)
@@ -35,5 +35,6 @@ class Config:
         "eye_closure": {"warn_sec": 1.0, "alarm_sec": 2.0, "beep": True},
         "perclos": {"window_sec": 30.0, "warn": 0.15, "alarm": 0.30, "min_coverage": 0.5},
         "gaze": {},
+        "early_drowsiness": {},  # 시험값은 src/early_drowsiness_config.py
         "fatigue": {"fatigue_threshold": 30.0},  # [추가] 테스트를 위해 임계치 설정 (기본 100점은 너무 높아서 낮게 잡음)
     })

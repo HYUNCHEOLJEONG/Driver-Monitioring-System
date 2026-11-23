@@ -7,6 +7,7 @@ from .analyzers import REGISTRY
 from .vehicle import ManualSource
 from .warning_rules import valid_speed
 from .warning_sound import WarningSound
+from .early_drowsiness_output import EarlyDrowsinessOutput
 
 
 class Pipeline:
@@ -30,6 +31,7 @@ class Pipeline:
         self.vehicle_source = ManualSource()
         self.vehicle_source.start()
         self.warning_sound = WarningSound()
+        self.early_output = EarlyDrowsinessOutput()
 
     def on_key(self, key):
         return self.vehicle_source.on_key(key)
@@ -88,6 +90,7 @@ class Pipeline:
             
         self.warning_sound.update(ctx)
         self.events.update(ctx, self.yolo_status.result, self.yolo_status.smoking_result)
+        self.early_output.update(ctx, self.events)
         return ctx
 
     def close(self):
