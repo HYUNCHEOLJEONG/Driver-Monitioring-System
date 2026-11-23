@@ -1,0 +1,24 @@
+VERSION "SAMPLE - 설명용 가상 DBC. 실제 차량의 ID/비트 배치와 다릅니다."
+
+NS_ :
+
+BS_:
+
+BU_: VEHICLE DMS
+
+BO_ 672 GEAR_STATUS: 8 VEHICLE
+ SG_ Gear : 0|4@1+ (1,0) [0|15] "" DMS
+
+BO_ 688 LIGHT_STATUS: 8 VEHICLE
+ SG_ TurnLeft : 0|1@1+ (1,0) [0|1] "" DMS
+ SG_ TurnRight : 1|1@1+ (1,0) [0|1] "" DMS
+ SG_ Hazard : 2|1@1+ (1,0) [0|1] "" DMS
+
+BO_ 704 SPEED: 8 VEHICLE
+ SG_ VehicleSpeed : 0|16@1+ (0.01,0) [0|300] "km/h" DMS
+
+BO_ 720 STEERING: 8 VEHICLE
+ SG_ SteeringAngle : 0|16@1- (0.1,0) [-780|780] "deg" DMS
+
+CM_ SG_ 672 Gear "0=P 1=R 2=N 3=D";
+VAL_ 672 Gear 0 "P" 1 "R" 2 "N" 3 "D";
